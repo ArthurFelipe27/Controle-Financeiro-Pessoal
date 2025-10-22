@@ -1,2 +1,0 @@
-tkcalendar==1.6.1
-matplotlib==3.8.4

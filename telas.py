@@ -1,357 +1,336 @@
-import tkinter as tk
-from tkinter import ttk, messagebox, simpledialog
-from tkcalendar import DateEntry
-from database import conectar, resetar_banco
+import ttkbootstrap as ttk
+from ttkbootstrap.constants import *
+from tkinter import messagebox, simpledialog
 import datetime
-import matplotlib.pyplot as plt
+
+# Importa as funções de lógica de negócios dos outros arquivos
+from database import resetar_banco
+import categoria_crud as cat_crud
+import transacao_crud as tran_crud
+import relatorio as rel
+
+# --- CLASSE PRINCIPAL DA APLICAÇÃO (UI) ---
 
 class App:
     def __init__(self, master):
         self.master = master
-        self.master.title("Controle Financeiro")
-        self.master.geometry("650x550")
+        self.master.title("Controle Financeiro Pessoal")
+        self.master.geometry("800x600")
+        self.master.minsize(700, 500) # Define um tamanho mínimo para a janela
         self.frame_atual = None
-
+        
+        style = ttk.Style()
+        style.configure("Treeview.Heading", font=('Helvetica', 10, 'bold'))
+        
         self.mostrar_menu_principal()
 
-    def limpar_frame(self):
-        """Remove o frame atual"""
+    def _limpar_frame(self):
+        """Destrói o frame atual e cria um novo para a próxima tela."""
         if self.frame_atual:
             self.frame_atual.destroy()
+        self.frame_atual = ttk.Frame(self.master, padding=(20, 10))
+        self.frame_atual.pack(fill=BOTH, expand=YES)
 
+    # --- TELA PRINCIPAL ---
     def mostrar_menu_principal(self):
-        """Tela inicial com saldo e botões"""
-        self.limpar_frame()
-        self.frame_atual = tk.Frame(self.master)
-        self.frame_atual.pack(fill="both", expand=True)
-
-        tk.Label(self.frame_atual, text="Controle Financeiro", font=("Arial", 20)).pack(pady=20)
-
-        # Saldo
-        self.saldo_label = tk.Label(self.frame_atual, text="", font=("Arial", 16))
-        self.saldo_label.pack(pady=10)
+        self._limpar_frame()
+        ttk.Label(self.frame_atual, text="Controle Financeiro", font=("Helvetica", 24, "bold"), bootstyle=PRIMARY).pack(pady=20)
+        
+        self.saldo_label = ttk.Label(self.frame_atual, text="", font=("Helvetica", 18))
+        self.saldo_label.pack(pady=20)
         self.atualizar_saldo()
 
-        # Botões principais
-        tk.Button(self.frame_atual, text="Gerenciar Categorias", width=30, command=self.mostrar_categorias).pack(pady=5)
-        tk.Button(self.frame_atual, text="Gerenciar Transações", width=30, command=self.mostrar_transacoes).pack(pady=5)
-        tk.Button(self.frame_atual, text="Ver Relatório", width=30, command=self.mostrar_relatorio).pack(pady=5)
-        tk.Button(self.frame_atual, text="Resetar Banco de Dados", width=30, bg="red", fg="white", command=self.resetar_banco_dados).pack(pady=20)
+        btn_frame = ttk.Frame(self.frame_atual)
+        btn_frame.pack(pady=20)
+        
+        button_style = {'width': 30, 'bootstyle': (PRIMARY, OUTLINE)}
+        ttk.Button(btn_frame, text="Gerenciar Transações", command=self.mostrar_transacoes, **button_style).pack(pady=8, ipady=5)
+        ttk.Button(btn_frame, text="Gerenciar Categorias", command=self.mostrar_categorias, **button_style).pack(pady=8, ipady=5)
+        ttk.Button(btn_frame, text="Ver Relatórios", command=self.mostrar_relatorio, **button_style).pack(pady=8, ipady=5)
+        ttk.Button(btn_frame, text="Resetar Banco de Dados", command=self.resetar_banco_dados, bootstyle=DANGER).pack(pady=25, ipady=5)
 
     def atualizar_saldo(self):
-        """Atualiza o saldo na tela"""
-        conn = conectar()
-        cursor = conn.cursor()
-        cursor.execute("SELECT COALESCE(SUM(valor), 0) FROM transacoes WHERE tipo = 'Receita'")
-        receitas = cursor.fetchone()[0]
-        cursor.execute("SELECT COALESCE(SUM(valor), 0) FROM transacoes WHERE tipo = 'Despesa'")
-        despesas = cursor.fetchone()[0]
+        receitas, despesas = rel.get_dados_relatorio("0001-01-01", "9999-12-31")
         saldo = receitas - despesas
-        cor = "green" if saldo >= 0 else "red"
-        self.saldo_label.config(text=f"Saldo Total: R$ {saldo:.2f}", fg=cor)
-        conn.close()
+        cor = SUCCESS if saldo >= 0 else DANGER
+        # --- CORREÇÃO: Verifica se o widget existe antes de tentar configurá-lo ---
+        # Isso previne o erro quando esta função é chamada de outra tela.
+        if hasattr(self, 'saldo_label') and self.saldo_label.winfo_exists():
+            self.saldo_label.config(text=f"Saldo Total: R$ {saldo:,.2f}", bootstyle=cor)
 
     def resetar_banco_dados(self):
-        """Reseta o banco"""
-        if messagebox.askyesno("Resetar Banco", "Tem certeza que deseja apagar tudo?"):
+        if messagebox.askyesno("Resetar Banco", "Tem certeza que deseja apagar TUDO? Esta ação não pode ser desfeita.", icon='warning'):
             resetar_banco()
             self.atualizar_saldo()
             messagebox.showinfo("Sucesso", "Banco de dados resetado com sucesso!")
 
+    # --- TELA DE CATEGORIAS ---
     def mostrar_categorias(self):
-        """Tela de categorias"""
-        self.limpar_frame()
-        self.frame_atual = tk.Frame(self.master)
-        self.frame_atual.pack(fill="both", expand=True)
+        self._limpar_frame()
+        header_frame = ttk.Frame(self.frame_atual)
+        header_frame.pack(fill=X, pady=(0, 10))
+        ttk.Label(header_frame, text="Gerenciar Categorias", font=("Helvetica", 16, "bold")).pack(side=LEFT)
+        
+        tree_frame = ttk.Frame(self.frame_atual)
+        tree_frame.pack(fill=BOTH, expand=YES)
+        
+        cols = ('ID', 'Nome')
+        self.tree_cat = ttk.Treeview(tree_frame, columns=cols, show='headings', bootstyle=PRIMARY)
+        self.tree_cat.heading('ID', text='ID')
+        self.tree_cat.heading('Nome', text='Nome da Categoria')
+        self.tree_cat.column('ID', width=80, anchor=CENTER)
+        self.tree_cat.pack(side=LEFT, fill=BOTH, expand=YES)
 
-        tk.Label(self.frame_atual, text="Gerenciar Categorias", font=("Arial", 16)).pack(pady=10)
+        scrollbar = ttk.Scrollbar(tree_frame, orient=VERTICAL, command=self.tree_cat.yview, bootstyle="round")
+        self.tree_cat.configure(yscrollcommand=scrollbar.set)
+        scrollbar.pack(side=RIGHT, fill=Y)
 
-        lista = tk.Listbox(self.frame_atual, width=50)
-        lista.pack(pady=10)
+        self.carregar_dados_categorias()
 
-        def carregar_categorias():
-            lista.delete(0, tk.END)
-            conn = conectar()
-            cursor = conn.cursor()
-            cursor.execute("SELECT id, nome FROM categorias ORDER BY nome")
-            for id_, nome in cursor.fetchall():
-                lista.insert(tk.END, f"{id_} - {nome}")
-            conn.close()
+        btn_frame = ttk.Frame(self.frame_atual)
+        btn_frame.pack(pady=15, fill=X, side=BOTTOM)
+        ttk.Button(btn_frame, text="Adicionar", command=self.adicionar_categoria_ui, bootstyle=SUCCESS).pack(side=LEFT, expand=YES, padx=5, ipady=4)
+        ttk.Button(btn_frame, text="Editar", command=self.editar_categoria_ui, bootstyle=INFO).pack(side=LEFT, expand=YES, padx=5, ipady=4)
+        ttk.Button(btn_frame, text="Excluir", command=self.excluir_categoria_ui, bootstyle=DANGER).pack(side=LEFT, expand=YES, padx=5, ipady=4)
+        ttk.Button(btn_frame, text="Voltar ao Menu", command=self.mostrar_menu_principal, bootstyle=(SECONDARY, OUTLINE)).pack(side=LEFT, expand=YES, padx=5, ipady=4)
 
-        carregar_categorias()
+    def carregar_dados_categorias(self):
+        for i in self.tree_cat.get_children():
+            self.tree_cat.delete(i)
+        for cat in cat_crud.listar_categorias():
+            self.tree_cat.insert("", END, values=cat)
+            
+    def adicionar_categoria_ui(self):
+        nome = simpledialog.askstring("Nova Categoria", "Digite o nome da categoria:")
+        if nome:
+            try:
+                cat_crud.adicionar_categoria(nome)
+                self.carregar_dados_categorias()
+            except ValueError as e:
+                messagebox.showerror("Erro de Validação", str(e))
 
-        def adicionar_categoria():
-            nome = simpledialog.askstring("Nova Categoria", "Digite o nome da categoria:")
-            if nome:
-                conn = conectar()
-                cursor = conn.cursor()
-                cursor.execute("INSERT INTO categorias (nome) VALUES (?)", (nome.strip(),))
-                conn.commit()
-                conn.close()
-                carregar_categorias()
+    def _get_selected_item_from_tree(self, tree):
+        selecao = tree.selection()
+        if not selecao:
+            messagebox.showwarning("Aviso", "Por favor, selecione um item na tabela.")
+            return None
+        return tree.item(selecao[0])['values']
 
-        def editar_categoria():
-            selecao = lista.curselection()
-            if not selecao:
-                messagebox.showwarning("Aviso", "Selecione uma categoria.")
-                return
-            item = lista.get(selecao[0])
-            id_categoria, nome_atual = item.split(" - ", 1)
-            novo_nome = simpledialog.askstring("Editar Categoria", "Novo nome:", initialvalue=nome_atual)
-            if novo_nome:
-                conn = conectar()
-                cursor = conn.cursor()
-                cursor.execute("UPDATE categorias SET nome=? WHERE id=?", (novo_nome.strip(), id_categoria))
-                conn.commit()
-                conn.close()
-                carregar_categorias()
+    def editar_categoria_ui(self):
+        item = self._get_selected_item_from_tree(self.tree_cat)
+        if not item: return
+        id_cat, nome_atual = item
+        novo_nome = simpledialog.askstring("Editar Categoria", "Novo nome:", initialvalue=nome_atual)
+        if novo_nome:
+            try:
+                cat_crud.atualizar_categoria(id_cat, novo_nome)
+                self.carregar_dados_categorias()
+            except ValueError as e:
+                messagebox.showerror("Erro de Validação", str(e))
+            
+    def excluir_categoria_ui(self):
+        item = self._get_selected_item_from_tree(self.tree_cat)
+        if not item: return
+        id_cat, nome = item
+        if messagebox.askyesno("Confirmar Exclusão", f"Deseja excluir a categoria '{nome}'?\nIsso desvinculará as transações associadas.", icon='warning'):
+            cat_crud.excluir_categoria(id_cat)
+            self.carregar_dados_categorias()
+            self.carregar_dados_transacoes() if hasattr(self, 'tree_tran') else None
 
-        def excluir_categoria():
-            selecao = lista.curselection()
-            if not selecao:
-                messagebox.showwarning("Aviso", "Selecione uma categoria.")
-                return
-            item = lista.get(selecao[0])
-            id_categoria = item.split(" - ")[0]
-            if messagebox.askyesno("Excluir", "Excluir esta categoria?"):
-                conn = conectar()
-                cursor = conn.cursor()
-                cursor.execute("DELETE FROM categorias WHERE id=?", (id_categoria,))
-                conn.commit()
-                conn.close()
-                carregar_categorias()
 
-        btn_frame = tk.Frame(self.frame_atual)
-        btn_frame.pack(pady=5)
-        tk.Button(btn_frame, text="Adicionar", command=adicionar_categoria).grid(row=0, column=0, padx=5)
-        tk.Button(btn_frame, text="Editar", command=editar_categoria).grid(row=0, column=1, padx=5)
-        tk.Button(btn_frame, text="Excluir", command=excluir_categoria).grid(row=0, column=2, padx=5)
-
-        tk.Button(self.frame_atual, text="Voltar", command=self.mostrar_menu_principal).pack(pady=10)
-
+    # --- TELA DE TRANSAÇÕES ---
     def mostrar_transacoes(self):
-        """Tela de transações"""
-        self.limpar_frame()
-        self.frame_atual = tk.Frame(self.master)
-        self.frame_atual.pack(fill="both", expand=True)
+        self._limpar_frame()
+        ttk.Label(self.frame_atual, text="Gerenciar Transações", font=("Helvetica", 16, "bold")).pack(pady=(0, 10))
+        
+        tree_frame = ttk.Frame(self.frame_atual)
+        tree_frame.pack(fill=BOTH, expand=YES)
 
-        tk.Label(self.frame_atual, text="Gerenciar Transações", font=("Arial", 16)).pack(pady=10)
+        cols = ('ID', 'Data', 'Valor', 'Tipo', 'Categoria')
+        self.tree_tran = ttk.Treeview(tree_frame, columns=cols, show='headings', bootstyle=PRIMARY)
+        for col in cols: self.tree_tran.heading(col, text=col)
+        
+        self.tree_tran.column('ID', width=50, anchor=CENTER)
+        self.tree_tran.column('Data', width=100, anchor=CENTER)
+        self.tree_tran.column('Valor', width=120, anchor='e')
+        self.tree_tran.column('Tipo', width=100, anchor=CENTER)
+        self.tree_tran.pack(side=LEFT, fill=BOTH, expand=YES)
 
-        lista = tk.Listbox(self.frame_atual, width=80)
-        lista.pack(pady=10)
+        scrollbar = ttk.Scrollbar(tree_frame, orient=VERTICAL, command=self.tree_tran.yview, bootstyle="round")
+        self.tree_tran.configure(yscrollcommand=scrollbar.set)
+        scrollbar.pack(side=RIGHT, fill=Y)
 
-        def carregar_transacoes():
-            lista.delete(0, tk.END)
-            conn = conectar()
-            cursor = conn.cursor()
-            cursor.execute("""
-                SELECT t.id, t.data, t.valor, t.tipo, c.nome
-                FROM transacoes t
-                LEFT JOIN categorias c ON t.categoria_id = c.id
-                ORDER BY t.data DESC
-            """)
-            for transacao in cursor.fetchall():
-                id_, data, valor, tipo, categoria = transacao
-                lista.insert(
-                    tk.END,
-                    f"{id_} - {data} | R$ {valor:.2f} | {tipo} | Categoria: {categoria or 'N/A'}"
-                )
-            conn.close()
+        self.carregar_dados_transacoes()
 
-        carregar_transacoes()
+        btn_frame = ttk.Frame(self.frame_atual)
+        btn_frame.pack(pady=15, fill=X, side=BOTTOM)
+        ttk.Button(btn_frame, text="Adicionar", command=lambda: self.abrir_formulario_transacao(), bootstyle=SUCCESS).pack(side=LEFT, expand=YES, padx=5, ipady=4)
+        ttk.Button(btn_frame, text="Editar", command=self.editar_transacao_ui, bootstyle=INFO).pack(side=LEFT, expand=YES, padx=5, ipady=4)
+        ttk.Button(btn_frame, text="Excluir", command=self.excluir_transacao_ui, bootstyle=DANGER).pack(side=LEFT, expand=YES, padx=5, ipady=4)
+        ttk.Button(btn_frame, text="Voltar ao Menu", command=self.mostrar_menu_principal, bootstyle=(SECONDARY, OUTLINE)).pack(side=LEFT, expand=YES, padx=5, ipady=4)
 
-        def abrir_formulario(id_transacao=None):
-            form = tk.Toplevel(self.master)
-            form.title("Nova Transação" if id_transacao is None else "Editar Transação")
-            form.geometry("400x400")
+    def carregar_dados_transacoes(self):
+        for i in self.tree_tran.get_children(): self.tree_tran.delete(i)
+        for t in tran_crud.listar_transacoes():
+            id_, data, valor, tipo, categoria = t
+            valor_formatado = f"R$ {valor:,.2f}"
+            self.tree_tran.insert("", END, values=(id_, data, valor_formatado, tipo, categoria or "N/A"), tags=(tipo,))
+        self.tree_tran.tag_configure('Receita', foreground='green')
+        self.tree_tran.tag_configure('Despesa', foreground='red')
 
-            tk.Label(form, text="Data:").pack(pady=5)
-            entry_data = DateEntry(form, width=12, background="darkblue", foreground="white", borderwidth=2, date_pattern='yyyy-mm-dd')
-            entry_data.set_date(datetime.date.today())
-            entry_data.pack()
+    def editar_transacao_ui(self):
+        item = self._get_selected_item_from_tree(self.tree_tran)
+        if not item: return
+        self.abrir_formulario_transacao(item[0])
 
-            tk.Label(form, text="Valor (R$):").pack(pady=5)
-            entry_valor = tk.Entry(form)
-            entry_valor.pack()
+    def excluir_transacao_ui(self):
+        item = self._get_selected_item_from_tree(self.tree_tran)
+        if not item: return
+        id_tran = item[0]
+        if messagebox.askyesno("Confirmar Exclusão", f"Deseja excluir a transação ID {id_tran}?", icon='warning'):
+            tran_crud.excluir_transacao(id_tran)
+            self.carregar_dados_transacoes()
+            self.atualizar_saldo()
 
-            tk.Label(form, text="Tipo:").pack(pady=5)
-            tipo_var = tk.StringVar()
-            combo_tipo = ttk.Combobox(form, textvariable=tipo_var, state="readonly")
-            combo_tipo['values'] = ("Receita", "Despesa")
-            combo_tipo.pack()
+    def abrir_formulario_transacao(self, id_transacao=None):
+        on_save_callback = lambda: [self.carregar_dados_transacoes(), self.atualizar_saldo()]
+        FormularioTransacao(self.master, id_transacao, on_save=on_save_callback)
 
-            tk.Label(form, text="Categoria:").pack(pady=5)
-            categoria_var = tk.StringVar()
-            combo_categoria = ttk.Combobox(form, textvariable=categoria_var, state="readonly")
-            conn = conectar()
-            cursor = conn.cursor()
-            cursor.execute("SELECT id, nome FROM categorias ORDER BY nome")
-            categorias = [f"{id_} - {nome}" for id_, nome in cursor.fetchall()]
-            combo_categoria['values'] = categorias
-            conn.close()
-            combo_categoria.pack()
 
-            if id_transacao:
-                conn = conectar()
-                cursor = conn.cursor()
-                cursor.execute("SELECT data, valor, tipo, categoria_id FROM transacoes WHERE id=?", (id_transacao,))
-                data, valor, tipo, categoria_id = cursor.fetchone()
-                entry_data.set_date(data)
-                entry_valor.insert(0, f"{valor:.2f}")
-                tipo_var.set(tipo)
-                if categoria_id:
-                    for item in categorias:
-                        if item.startswith(f"{categoria_id} -"):
-                            categoria_var.set(item)
-                conn.close()
-
-            def salvar():
-                data = entry_data.get()
-                valor = entry_valor.get()
-                tipo = tipo_var.get()
-                categoria = categoria_var.get()
-
-                if not data or not valor or not tipo:
-                    messagebox.showerror("Erro", "Preencha todos os campos obrigatórios.")
-                    return
-                try:
-                    valor_float = float(valor)
-                except ValueError:
-                    messagebox.showerror("Erro", "O valor deve ser numérico.")
-                    return
-
-                categoria_id = None
-                if categoria:
-                    categoria_id = categoria.split(" - ")[0]
-
-                conn = conectar()
-                cursor = conn.cursor()
-                if id_transacao:
-                    cursor.execute("""
-                        UPDATE transacoes SET data=?, valor=?, tipo=?, categoria_id=? WHERE id=?
-                    """, (data, valor_float, tipo, categoria_id, id_transacao))
-                else:
-                    cursor.execute("""
-                        INSERT INTO transacoes (data, valor, tipo, categoria_id)
-                        VALUES (?, ?, ?, ?)
-                    """, (data, valor_float, tipo, categoria_id))
-                conn.commit()
-                conn.close()
-                carregar_transacoes()
-                self.atualizar_saldo()
-                form.destroy()
-
-            tk.Button(form, text="Salvar", command=salvar).pack(pady=20)
-
-        def adicionar_transacao():
-            abrir_formulario()
-
-        def editar_transacao():
-            selecao = lista.curselection()
-            if not selecao:
-                messagebox.showwarning("Aviso", "Selecione uma transação.")
-                return
-            item = lista.get(selecao[0])
-            id_transacao = item.split(" - ")[0]
-            abrir_formulario(id_transacao)
-
-        def excluir_transacao():
-            selecao = lista.curselection()
-            if not selecao:
-                messagebox.showwarning("Aviso", "Selecione uma transação.")
-                return
-            item = lista.get(selecao[0])
-            id_transacao = item.split(" - ")[0]
-            if messagebox.askyesno("Excluir", "Excluir esta transação?"):
-                conn = conectar()
-                cursor = conn.cursor()
-                cursor.execute("DELETE FROM transacoes WHERE id=?", (id_transacao,))
-                conn.commit()
-                conn.close()
-                carregar_transacoes()
-                self.atualizar_saldo()
-
-        btn_frame = tk.Frame(self.frame_atual)
-        btn_frame.pack(pady=5)
-        tk.Button(btn_frame, text="Adicionar", command=adicionar_transacao).grid(row=0, column=0, padx=5)
-        tk.Button(btn_frame, text="Editar", command=editar_transacao).grid(row=0, column=1, padx=5)
-        tk.Button(btn_frame, text="Excluir", command=excluir_transacao).grid(row=0, column=2, padx=5)
-
-        tk.Button(self.frame_atual, text="Voltar", command=self.mostrar_menu_principal).pack(pady=10)
-
+    # --- TELA DE RELATÓRIOS ---
     def mostrar_relatorio(self):
-        """Tela de relatório"""
-        self.limpar_frame()
-        self.frame_atual = tk.Frame(self.master)
-        self.frame_atual.pack(fill="both", expand=True)
-
-        tk.Label(self.frame_atual, text="Relatório Financeiro", font=("Arial", 16)).pack(pady=10)
-
-        filtros_frame = tk.Frame(self.frame_atual)
+        self._limpar_frame()
+        ttk.Label(self.frame_atual, text="Relatório Financeiro", font=("Helvetica", 16, "bold")).pack(pady=10)
+        
+        filtros_frame = ttk.Frame(self.frame_atual)
         filtros_frame.pack(pady=10)
+        
+        ttk.Label(filtros_frame, text="Data Inicial:").grid(row=0, column=0, padx=5, pady=5)
+        self.data_inicial_rel = ttk.DateEntry(filtros_frame, dateformat='%Y-%m-%d', startdate=datetime.date.today().replace(day=1))
+        self.data_inicial_rel.grid(row=0, column=1, padx=5, pady=5)
+        
+        ttk.Label(filtros_frame, text="Data Final:").grid(row=1, column=0, padx=5, pady=5)
+        self.data_final_rel = ttk.DateEntry(filtros_frame, dateformat='%Y-%m-%d', startdate=datetime.date.today())
+        self.data_final_rel.grid(row=1, column=1, padx=5, pady=5)
+        
+        resultado_frame = ttk.Labelframe(self.frame_atual, text="Resumo do Período", padding=20)
+        resultado_frame.pack(pady=20, padx=20, fill='x')
+        
+        self.saldo_label_rel = ttk.Label(resultado_frame, text="Selecione o período e clique em gerar.", font=("Arial", 11), justify=LEFT)
+        self.saldo_label_rel.pack()
 
-        tk.Label(filtros_frame, text="Data Inicial:").grid(row=0, column=0, padx=5)
-        data_inicial = DateEntry(filtros_frame, width=12, background="darkblue", foreground="white", borderwidth=2, date_pattern='yyyy-mm-dd')
-        data_inicial.set_date(datetime.date.today().replace(day=1))
-        data_inicial.grid(row=0, column=1, padx=5)
+        btn_frame_rel = ttk.Frame(self.frame_atual)
+        btn_frame_rel.pack(pady=10)
+        ttk.Button(btn_frame_rel, text="Gerar Relatório e Gráfico", command=self.gerar_relatorio_ui, bootstyle=SUCCESS).pack(side=LEFT, padx=10, ipady=5)
+        ttk.Button(btn_frame_rel, text="Voltar ao Menu", command=self.mostrar_menu_principal, bootstyle=(SECONDARY, OUTLINE)).pack(side=LEFT, padx=10, ipady=5)
 
-        tk.Label(filtros_frame, text="Data Final:").grid(row=1, column=0, padx=5)
-        data_final = DateEntry(filtros_frame, width=12, background="darkblue", foreground="white", borderwidth=2, date_pattern='yyyy-mm-dd')
-        data_final.set_date(datetime.date.today())
-        data_final.grid(row=1, column=1, padx=5)
+    def gerar_relatorio_ui(self):
+        ini = self.data_inicial_rel.entry.get()
+        fim = self.data_final_rel.entry.get()
+        
+        receitas, despesas = rel.get_dados_relatorio(ini, fim)
+        saldo = receitas - despesas
+        cor = SUCCESS if saldo >= 0 else DANGER
+        
+        texto = f"Receitas: R$ {receitas:,.2f}\nDespesas: R$ {despesas:,.2f}\n\nSaldo no Período: R$ {saldo:,.2f}"
+        self.saldo_label_rel.config(text=texto, bootstyle=cor)
 
-        saldo_label = tk.Label(self.frame_atual, text="", font=("Arial", 12))
-        saldo_label.pack(pady=10)
+        categorias = rel.get_despesas_por_categoria(ini, fim)
+        if not rel.gerar_grafico_despesas(categorias):
+            messagebox.showinfo("Sem Dados", "Não há despesas no período selecionado para gerar um gráfico.")
 
-        def gerar_relatorio():
-            ini = data_inicial.get()
-            fim = data_final.get()
+# --- CLASSE PARA O FORMULÁRIO DE TRANSAÇÃO (Janela Toplevel) ---
+class FormularioTransacao(ttk.Toplevel):
+    def __init__(self, parent, id_transacao=None, on_save=None):
+        super().__init__(parent)
+        self.id_transacao = id_transacao
+        self.on_save = on_save
 
-            conn = conectar()
-            cursor = conn.cursor()
-            cursor.execute("""
-                SELECT tipo, COALESCE(SUM(valor), 0) FROM transacoes
-                WHERE data BETWEEN ? AND ?
-                GROUP BY tipo
-            """, (ini, fim))
-            dados = dict(cursor.fetchall())
-            receitas = dados.get('Receita', 0)
-            despesas = dados.get('Despesa', 0)
-            saldo = receitas - despesas
+        self.title("Editar Transação" if id_transacao else "Nova Transação")
+        self.geometry("400x420")
+        self.transient(parent)
+        self.grab_set()
 
-            cor = "green" if saldo >= 0 else "red"
-            saldo_label.config(
-                text=f"Receitas: R$ {receitas:.2f} | Despesas: R$ {despesas:.2f}\nSaldo: R$ {saldo:.2f}", fg=cor
-            )
+        container = ttk.Frame(self, padding=20)
+        container.pack(fill=BOTH, expand=YES)
 
-            cursor.execute("""
-                SELECT c.nome, SUM(t.valor) FROM transacoes t
-                JOIN categorias c ON t.categoria_id = c.id
-                WHERE t.tipo='Despesa' AND t.data BETWEEN ? AND ?
-                GROUP BY c.nome
-                ORDER BY SUM(t.valor) DESC
-            """, (ini, fim))
-            categorias = cursor.fetchall()
-            conn.close()
+        # Dados iniciais para o formulário
+        self.dados_iniciais = {}
+        if id_transacao:
+            self.dados_iniciais = tran_crud.buscar_transacao_por_id(self.id_transacao)
+            if not self.dados_iniciais:
+                messagebox.showerror("Erro", "Transação não encontrada.", parent=self)
+                self.destroy()
+                return
+        
+        # Widgets
+        ttk.Label(container, text="Data:").pack(pady=(10, 2))
+        data_inicial = self.dados_iniciais.get('data', datetime.date.today())
+        self.entry_data = ttk.DateEntry(container, dateformat='%Y-%m-%d', startdate=data_inicial)
+        self.entry_data.pack()
 
-            if categorias:
-                nomes, valores = zip(*categorias)
-                if len(nomes) <= 6:
-                    plt.figure(figsize=(6, 4))
-                    plt.title("Despesas por Categoria (Pizza)")
-                    plt.pie(valores, labels=nomes, autopct="%1.1f%%", startangle=90)
-                    plt.axis("equal")
-                else:
-                    plt.figure(figsize=(8, 5))
-                    plt.title("Despesas por Categoria (Barras)")
-                    plt.barh(nomes, valores, color="skyblue")
-                    plt.xlabel("Valor gasto (R$)")
-                    plt.gca().invert_yaxis()
+        ttk.Label(container, text="Valor (R$):").pack(pady=(10, 2))
+        self.entry_valor = ttk.Entry(container)
+        self.entry_valor.pack()
 
-                plt.tight_layout()
-                plt.show()
+        ttk.Label(container, text="Tipo:").pack(pady=(10, 2))
+        self.tipo_var = ttk.StringVar()
+        self.combo_tipo = ttk.Combobox(container, textvariable=self.tipo_var, state="readonly", values=("Receita", "Despesa"))
+        self.combo_tipo.pack()
+
+        ttk.Label(container, text="Categoria:").pack(pady=(10, 2))
+        self.categoria_var = ttk.StringVar()
+        self.categorias = {nome: id_ for id_, nome in cat_crud.listar_categorias()}
+        self.combo_categoria = ttk.Combobox(container, textvariable=self.categoria_var, state="readonly", values=[""] + list(self.categorias.keys()))
+        self.combo_categoria.pack()
+
+        ttk.Button(container, text="Salvar", command=self.salvar, bootstyle=SUCCESS).pack(pady=20, ipady=5, fill=X)
+        
+        if id_transacao:
+            self.carregar_dados()
+
+    def carregar_dados(self):
+        valor = self.dados_iniciais.get('valor', 0.0)
+        tipo = self.dados_iniciais.get('tipo', '')
+        cat_id = self.dados_iniciais.get('cat_id')
+        
+        self.entry_valor.insert(0, f"{valor:.2f}")
+        self.tipo_var.set(tipo)
+        if cat_id:
+            for nome, id_ in self.categorias.items():
+                if id_ == cat_id:
+                    self.categoria_var.set(nome)
+                    break
+
+    def salvar(self):
+        try:
+            data = self.entry_data.entry.get()
+            valor_str = self.entry_valor.get().replace(",", ".")
+            tipo = self.tipo_var.get()
+            
+            if not all([data, valor_str, tipo]):
+                raise ValueError("Preencha os campos Data, Valor e Tipo.")
+            
+            try:
+                valor = float(valor_str)
+            except ValueError:
+                raise ValueError("O valor inserido não é um número válido.")
+
+            cat_selecionada = self.categoria_var.get()
+            cat_id = self.categorias.get(cat_selecionada)
+
+            if self.id_transacao:
+                tran_crud.atualizar_transacao(self.id_transacao, data, valor, tipo, cat_id)
             else:
-                messagebox.showinfo("Sem dados", "Não há despesas para o período selecionado.")
+                tran_crud.adicionar_transacao(data, valor, tipo, cat_id)
+            
+            if self.on_save:
+                self.on_save()
+            
+            self.destroy()
 
-        tk.Button(self.frame_atual, text="Gerar Relatório", command=gerar_relatorio).pack(pady=10)
-        tk.Button(self.frame_atual, text="Voltar", command=self.mostrar_menu_principal).pack(pady=10)
+        except ValueError as e:
+            messagebox.showerror("Erro de Validação", str(e), parent=self)
+        except Exception as e:
+            messagebox.showerror("Erro Inesperado", f"Ocorreu um erro: {e}", parent=self)
+
